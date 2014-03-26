@@ -1,0 +1,34 @@
+OASISFormat: 0.4
+Name:        mqtt
+Version:     0.1
+Synopsis:    OCaml implementation of the MQTT protocol
+Authors:     Josh Allmann <joshua.allmann@gmail.com>
+License:     BSD-3-clause
+Plugins:     META (0.4), DevFiles (0.4)
+
+Library mqtt
+  Path:       lib
+  BuildTools: ocamlbuild
+  Modules:    Mqtt
+  BuildDepends: lwt, lwt.unix, oUnit, ocplib-endian
+  Pack:       false
+  FindlibName: mqtt
+  ByteOpt:    -bin-annot
+  NativeOpt:  -bin-annot
+  
+Test "TestMqtt"
+  Command: test/mqtt_test
+  
+Executable mqtt_example
+  Path:       example
+  BuildTools: ocamlbuild
+  MainIs:     example.ml
+  BuildDepends: mqtt,lwt
+  Install:    false
+
+Executable mqtt_test
+  Path:       test
+  BuildTools: ocamlbuild
+  MainIs:     test.ml
+  BuildDepends: mqtt, oUnit
+  Install:    false
