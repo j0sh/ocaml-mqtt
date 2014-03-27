@@ -65,7 +65,7 @@ module Mqtt : sig
 
         val connect_options : ?clientid:string -> ?userpass:cxn_userpass -> ?will:(string * string) -> ?flags:cxn_flags list -> ?timer:int -> unit -> cxn_data
 
-        val connect : ?opt:cxn_data -> ?port:int -> string -> client monad
+        val connect : ?opt:cxn_data -> ?error_fn:(client -> exn -> unit monad) -> ?port:int -> string -> client monad
         val publish : ?opt:pkt_opt -> ?id:int -> client -> string -> string -> unit monad
 
         val subscribe : ?opt:pkt_opt -> ?id:int -> client -> (string * qos) list -> unit monad
@@ -1000,9 +1000,13 @@ module MqttClient = struct
         stream: (string * string) Lwt_stream.t;
         push : ((string * string) option -> unit);
         inflight : (int, (int Lwt_condition.t * msg_data)) Hashtbl.t;
-        reader : unit Lwt.t;
-        pinger : unit Lwt.t
+        mutable reader : unit Lwt.t;
+        mutable pinger : unit Lwt.t;
+        error_fn : (client -> exn -> unit Lwt.t);
     }
+
+    let default_error_fn client exn =
+        Printexc.to_string exn |> Lwt_io.printlf "mqtt error: %s"
 
     let connect_options ?(clientid = "OCamlMQTT") ?userpass ?will ?(flags= []) ?(timer = 10) () =
         { clientid; userpass; will; flags; timer}
@@ -1031,8 +1035,7 @@ module MqttClient = struct
             loop ret in
         loop Lwt.return_unit
 
-    let wrap_catch f = Lwt.catch f
-        (fun exn -> Printexc.to_string exn |> Lwt_io.printl)
+    let wrap_catch f e = Lwt.catch f e
 
     let pinger cxn timeout () =
         let (_, oc) = cxn in
@@ -1043,7 +1046,7 @@ module MqttClient = struct
             loop (Lwt_unix.sleep tmo) in
         loop (Lwt_unix.sleep tmo)
 
-    let connect ?(opt = connect_options ()) ?(port = 1883) host =
+    let connect ?(opt = connect_options ()) ?(error_fn = default_error_fn) ?(port = 1883) host =
         Lwt_unix.gethostbyname host >>= fun hostent ->
         let haddr = hostent.Lwt_unix.h_addr_list.(0) in
         let addr = Lwt_unix.ADDR_INET(haddr, port) in
@@ -1056,11 +1059,16 @@ module MqttClient = struct
         Lwt_io.write oc cd >>= fun () ->
         let stream, push = Lwt_stream.create () in
         let inflight = Hashtbl.create 100 in
-        let pinger = wrap_catch (pinger cxn opt.timer) in
-        let client = { cxn; stream; push; inflight; reader=Lwt.return_unit; pinger} in
-        let reader () = wrap_catch (fun () -> read_packets client) in
         read_packet cxn >>= function
-            | Connack Cxnack_accepted -> Lwt.return {cxn; stream; push; inflight; reader=reader (); pinger}
+            | Connack Cxnack_accepted ->
+                let ping = Lwt.return_unit in
+                let reader = Lwt.return_unit in
+                let client = { cxn; stream; push; inflight; reader; pinger=ping; error_fn; } in
+                let pinger = wrap_catch (pinger cxn opt.timer) (error_fn client) in
+                let reader = wrap_catch (fun () -> read_packets client) (error_fn client) in
+                client.pinger <- pinger;
+                client.reader <- reader;
+                Lwt.return client
             | Connack s -> Failure (string_of_cxnack_flag s) |> Lwt.fail
             | _ -> Failure ("Unknown packet type received after conn") |> Lwt.fail
 
@@ -1079,7 +1087,7 @@ module MqttClient = struct
         wrap_catch (fun () ->
         Lwt_io.write oc sd >>= fun () ->
         Lwt_condition.wait cond >>= fun _ ->
-        Lwt.return_unit)
+        Lwt.return_unit) (client.error_fn client)
 
     let sub_stream client = client.stream
 
