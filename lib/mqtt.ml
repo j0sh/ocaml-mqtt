@@ -56,6 +56,8 @@ module Mqtt : sig
 
     val pingresp : unit -> string
 
+    val disconnect : unit -> string
+
     val read_packet : t -> msg_data monad
 
     val tests : OUnit.test list
@@ -69,6 +71,8 @@ module Mqtt : sig
         val publish : ?opt:pkt_opt -> ?id:int -> client -> string -> string -> unit monad
 
         val subscribe : ?opt:pkt_opt -> ?id:int -> client -> (string * qos) list -> unit monad
+
+        val disconnect : client -> unit monad
 
         val sub_stream : client -> (string * string) Lwt_stream.t
 
@@ -1088,6 +1092,14 @@ module MqttClient = struct
         Lwt_io.write oc sd >>= fun () ->
         Lwt_condition.wait cond >>= fun _ ->
         Lwt.return_unit) (client.error_fn client)
+
+    let disconnect client =
+        let (ic, oc) = client.cxn in
+        disconnect () |> Lwt_io.write oc >>= fun () ->
+        (* push None to client; stop reader and pinger ?? *)
+        let catch f = Lwt.catch (fun () -> f) (function _ -> Lwt.return_unit) in
+        Lwt_io.close ic |> catch >>= fun () ->
+        Lwt_io.close oc |> catch
 
     let sub_stream client = client.stream
 
