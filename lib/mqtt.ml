@@ -1012,7 +1012,7 @@ module MqttClient = struct
     let default_error_fn client exn =
         Printexc.to_string exn |> Lwt_io.printlf "mqtt error: %s"
 
-    let connect_options ?(clientid = "OCamlMQTT") ?userpass ?will ?(flags= []) ?(timer = 10) () =
+    let connect_options ?(clientid = "OCamlMQTT") ?userpass ?will ?(flags= [Clean_session]) ?(timer = 10) () =
         { clientid; userpass; will; flags; timer}
 
     let read_packets client =
