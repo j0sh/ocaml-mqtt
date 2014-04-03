@@ -1015,7 +1015,7 @@ module MqttClient = struct
     let connect_options ?(clientid = "OCamlMQTT") ?userpass ?will ?(flags= [Clean_session]) ?(timer = 10) () =
         { clientid; userpass; will; flags; timer}
 
-    let read_packets client =
+    let read_packets client () =
         let cxn = client.cxn in
         let ack_inflight id pkt_data =
             let (cond, data) = Hashtbl.find client.inflight id in
@@ -1028,27 +1028,26 @@ module MqttClient = struct
         let push_id id pkt_data topic pay =
             ack_inflight id pkt_data >>= fun () -> push topic pay in
         let rec loop g =
-            g >>= fun () ->
-            let ret = read_packet cxn >>= fun pkt -> match pkt with
+            read_packet cxn >>= fun pkt -> (match pkt with
             | Publish (None, topic, payload) -> push topic payload
             | Publish (Some id, topic, payload) -> push_id id pkt topic payload
             | Suback (id, _) | Unsuback id | Puback id | Pubrec id |
               Pubrel id | Pubcomp id -> ack_inflight id pkt
             | Pingresp -> Lwt.return_unit
-            | _ -> Lwt.fail (Failure "Unknown packet from server") in
-            loop ret in
-        loop Lwt.return_unit
+            | _ -> Lwt.fail (Failure "Unknown packet from server")) >>= fun _ ->
+            loop g in
+        loop ()
 
-    let wrap_catch f e = Lwt.catch f e
+    let wrap_catch client f = client.error_fn client |> Lwt.catch f
 
     let pinger cxn timeout () =
         let (_, oc) = cxn in
         let tmo = 0.9 *. (float_of_int timeout) in (* 10% leeway *)
         let rec loop g =
-            g >>= fun () ->
+            Lwt_unix.sleep tmo >>= fun () ->
             pingreq () |> Lwt_io.write oc >>= fun () ->
-            loop (Lwt_unix.sleep tmo) in
-        loop (Lwt_unix.sleep tmo)
+            loop g in
+        loop ()
 
     let connect ?(opt = connect_options ()) ?(error_fn = default_error_fn) ?(port = 1883) host =
         Lwt_unix.gethostbyname host >>= fun hostent ->
@@ -1068,8 +1067,8 @@ module MqttClient = struct
                 let ping = Lwt.return_unit in
                 let reader = Lwt.return_unit in
                 let client = { cxn; stream; push; inflight; reader; pinger=ping; error_fn; } in
-                let pinger = wrap_catch (pinger cxn opt.timer) (error_fn client) in
-                let reader = wrap_catch (fun () -> read_packets client) (error_fn client) in
+                let pinger = wrap_catch client (pinger cxn opt.timer) in
+                let reader = wrap_catch client (read_packets client) in
                 client.pinger <- pinger;
                 client.reader <- reader;
                 Lwt.return client
@@ -1088,10 +1087,10 @@ module MqttClient = struct
         let mid = !msgid in
         let cond = Lwt_condition.create () in
         Hashtbl.add client.inflight mid (cond, (Suback (mid, qoses)));
-        wrap_catch (fun () ->
+        wrap_catch client (fun () ->
         Lwt_io.write oc sd >>= fun () ->
         Lwt_condition.wait cond >>= fun _ ->
-        Lwt.return_unit) (client.error_fn client)
+        Lwt.return_unit)
 
     let disconnect client =
         let (ic, oc) = client.cxn in
