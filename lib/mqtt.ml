@@ -1018,12 +1018,13 @@ module MqttClient = struct
     let read_packets client () =
         let cxn = client.cxn in
         let ack_inflight id pkt_data =
-            let (cond, data) = Hashtbl.find client.inflight id in
+            try let (cond, data) = Hashtbl.find client.inflight id in
             if pkt_data = data then begin
                 Hashtbl.remove client.inflight id;
                 Lwt_condition.signal cond id;
                 Lwt.return_unit
-            end else Lwt.fail (Failure "unexpected packet in ack") in
+            end else Lwt.fail (Failure "unexpected packet in ack")
+            with exn -> Lwt.fail (Failure "ack not found") in
         let push topic pay = Some (topic, pay) |> client.push |> Lwt.return in
         let push_id id pkt_data topic pay =
             ack_inflight id pkt_data >>= fun () -> push topic pay in
