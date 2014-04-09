@@ -78,6 +78,13 @@ module Mqtt : sig
 
     end
 
+    module MqttServer : sig
+        type t
+
+        val listen : ?host:string -> ?port:int -> unit -> t monad
+
+    end
+
 end = struct
 
 module BE = EndianString.BigEndian
@@ -1107,6 +1114,52 @@ module MqttClient = struct
         Lwt_io.close oc |> catch
 
     let sub_stream client = client.stream
+
+end
+
+module MqttServer = struct
+
+type t = Lwt_io.server
+
+let handle_sub outch s =
+    let (msgid, list) = s in
+    let qoses = List.map (fun (_, q) -> q) list in
+    suback msgid qoses |> Lwt_io.write outch
+
+let cxns = ref []
+
+let handle_pub p =
+    let (_, topic, payload) = p in
+    let s = publish topic payload in
+    let write ch = Lwt_io.write ch s in
+    Lwt_list.iter_p write !cxns
+
+let srv_cxn cxn =
+    Lwt.catch (fun () ->
+    let (_, outch) = cxn in
+    cxns := outch :: !cxns;
+    read_packet cxn >>= (function
+    | (_, Connect _) -> connack Cxnack_accepted |> Lwt_io.write outch
+    | _ -> Lwt.fail (Failure "Mqtt Server: Expected connect")) >>= fun () ->
+    let rec loop g =
+        read_packet cxn >>= (function
+        | (_, Publish s) -> handle_pub s
+        | (_, Subscribe s) -> handle_sub outch s
+        | (_, Pingreq) -> pingresp () |> Lwt_io.write outch
+        | _ -> Lwt.fail (Failure "Mqtt Server: Unknown paqet")) >>= fun () ->
+        loop g in
+    loop ())
+        (fun exn -> Lwt_io.printlf "SRVERR: %s" (Printexc.to_string exn)) |> Lwt.ignore_result
+
+let addr host port =
+    Lwt_unix.gethostbyname host >>= fun hostent ->
+    let inet_addr = hostent.Unix.h_addr_list.(0) in
+    Unix.ADDR_INET (inet_addr, port) |> Lwt.return
+
+let listen ?(host = "localhost") ?(port = 1883) () =
+    addr host port >>= fun a ->
+    let srv = Lwt_io.establish_server ~backlog:1000 a srv_cxn in
+    Lwt.return srv
 
 end
 
