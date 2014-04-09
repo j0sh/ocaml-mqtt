@@ -58,7 +58,7 @@ module Mqtt : sig
 
     val disconnect : unit -> string
 
-    val read_packet : t -> msg_data monad
+    val read_packet : t -> (pkt_opt * msg_data) monad
 
     val tests : OUnit.test list
 
@@ -686,8 +686,12 @@ let read_packet ctx =
     Lwt_io.read_char inch >>= fun ch ->
     let (msgid, opts) = Char.code ch |> decode_fixed_header in
     decode_length inch >>= fun count ->
-    Lwt_io.read ~count inch >>= fun data ->
-    ReadBuffer.make data |> decode_packet opts msgid |> Lwt.return
+    let data = String.create count in
+    let rd = try Lwt_io.read_into_exactly inch data 0 count
+    with End_of_file -> Lwt.fail (Failure "could not read bytes") in
+    rd >>= fun () ->
+    let pkt = ReadBuffer.make data |> decode_packet opts msgid in
+    Lwt.return (opts, pkt)
 
 module MqttTests : sig
 
@@ -1029,7 +1033,8 @@ module MqttClient = struct
         let push_id id pkt_data topic pay =
             ack_inflight id pkt_data >>= fun () -> push topic pay in
         let rec loop g =
-            read_packet cxn >>= fun pkt -> (match pkt with
+            read_packet cxn >>= fun (_, pkt) ->
+            (match pkt with
             | Publish (None, topic, payload) -> push topic payload
             | Publish (Some id, topic, payload) -> push_id id pkt topic payload
             | Suback (id, _) | Unsuback id | Puback id | Pubrec id |
@@ -1064,7 +1069,7 @@ module MqttClient = struct
         let stream, push = Lwt_stream.create () in
         let inflight = Hashtbl.create 100 in
         read_packet cxn >>= function
-            | Connack Cxnack_accepted ->
+            | (_, Connack Cxnack_accepted) ->
                 let ping = Lwt.return_unit in
                 let reader = Lwt.return_unit in
                 let client = { cxn; stream; push; inflight; reader; pinger=ping; error_fn; } in
@@ -1073,7 +1078,7 @@ module MqttClient = struct
                 client.pinger <- pinger;
                 client.reader <- reader;
                 Lwt.return client
-            | Connack s -> Failure (string_of_cxnack_flag s) |> Lwt.fail
+            | (_, Connack s) -> Failure (string_of_cxnack_flag s) |> Lwt.fail
             | _ -> Failure ("Unknown packet type received after conn") |> Lwt.fail
 
     let publish ?opt ?id client topic payload =
