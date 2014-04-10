@@ -1121,6 +1121,10 @@ module MqttServer = struct
 
 type t = Lwt_io.server
 
+let () =
+    let open Sys in
+    set_signal sigpipe Signal_ignore
+
 let handle_sub outch s =
     let (msgid, list) = s in
     let qoses = List.map (fun (_, q) -> q) list in
@@ -1135,8 +1139,8 @@ let handle_pub p =
     Lwt_list.iter_p write !cxns
 
 let srv_cxn cxn =
+    let (inch, outch) = cxn in
     Lwt.catch (fun () ->
-    let (_, outch) = cxn in
     cxns := outch :: !cxns;
     read_packet cxn >>= (function
     | (_, Connect _) -> connack Cxnack_accepted |> Lwt_io.write outch
@@ -1146,10 +1150,19 @@ let srv_cxn cxn =
         | (_, Publish s) -> handle_pub s
         | (_, Subscribe s) -> handle_sub outch s
         | (_, Pingreq) -> pingresp () |> Lwt_io.write outch
+        | (_, Disconnect) -> Lwt_io.printl "Disconnected client"
         | _ -> Lwt.fail (Failure "Mqtt Server: Unknown paqet")) >>= fun () ->
         loop g in
     loop ())
-        (fun exn -> Lwt_io.printlf "SRVERR: %s" (Printexc.to_string exn)) |> Lwt.ignore_result
+        (function Unix.Unix_error (Unix.EPIPE, _, _)
+        | Unix.Unix_error (Unix.ECONNRESET, _, _)
+        | Unix.Unix_error (Unix.ENOTCONN, _, _)
+        | End_of_file ->
+            Printf.printf "Cleaning up client\n%!";
+            cxns := List.filter (fun ch -> ch != outch) !cxns;
+            Lwt_io.close inch <&> Lwt_io.close outch >>= fun () ->
+            Lwt.return_unit
+        | exn -> Lwt_io.printlf "SRVERR: %s" (Printexc.to_string exn)) |> Lwt.ignore_result
 
 let addr host port =
     Lwt_unix.gethostbyname host >>= fun hostent ->
