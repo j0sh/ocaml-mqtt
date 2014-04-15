@@ -1,5 +1,5 @@
 (* OASIS_START *)
-(* DO NOT EDIT (digest: e448987c389b9bb57c7b8cb093b0dfdf) *)
+(* DO NOT EDIT (digest: d817e23a67c3ba4b8423e7c0b54b6898) *)
 module OASISGettext = struct
 (* # 22 "src/oasis/OASISGettext.ml" *)
 
@@ -585,17 +585,35 @@ let package_default =
      flags =
        [
           (["oasis_library_mqtt_byte"; "ocaml"; "link"; "byte"],
-            [(OASISExpr.EBool true, S [A "-bin-annot"])]);
+            [
+               (OASISExpr.EBool true,
+                 S [A "-bin-annot"; A "-ppopt"; A "-lwt-debug"])
+            ]);
           (["oasis_library_mqtt_native"; "ocaml"; "link"; "native"],
-            [(OASISExpr.EBool true, S [A "-bin-annot"])]);
+            [
+               (OASISExpr.EBool true,
+                 S [A "-bin-annot"; A "-ppopt"; A "-lwt-debug"])
+            ]);
           (["oasis_library_mqtt_byte"; "ocaml"; "ocamldep"; "byte"],
-            [(OASISExpr.EBool true, S [A "-bin-annot"])]);
+            [
+               (OASISExpr.EBool true,
+                 S [A "-bin-annot"; A "-ppopt"; A "-lwt-debug"])
+            ]);
           (["oasis_library_mqtt_native"; "ocaml"; "ocamldep"; "native"],
-            [(OASISExpr.EBool true, S [A "-bin-annot"])]);
+            [
+               (OASISExpr.EBool true,
+                 S [A "-bin-annot"; A "-ppopt"; A "-lwt-debug"])
+            ]);
           (["oasis_library_mqtt_byte"; "ocaml"; "compile"; "byte"],
-            [(OASISExpr.EBool true, S [A "-bin-annot"])]);
+            [
+               (OASISExpr.EBool true,
+                 S [A "-bin-annot"; A "-ppopt"; A "-lwt-debug"])
+            ]);
           (["oasis_library_mqtt_native"; "ocaml"; "compile"; "native"],
-            [(OASISExpr.EBool true, S [A "-bin-annot"])])
+            [
+               (OASISExpr.EBool true,
+                 S [A "-bin-annot"; A "-ppopt"; A "-lwt-debug"])
+            ])
        ];
      includes = [("test", ["lib"]); ("example", ["lib"])]
   }
@@ -603,6 +621,6 @@ let package_default =
 
 let dispatch_default = MyOCamlbuildBase.dispatch_default package_default;;
 
-# 607 "myocamlbuild.ml"
+# 625 "myocamlbuild.ml"
 (* OASIS_STOP *)
 Ocamlbuild_plugin.dispatch dispatch_default;;
