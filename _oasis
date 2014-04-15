@@ -10,15 +10,15 @@ Library mqtt
   Path:       lib
   BuildTools: ocamlbuild
   Modules:    Mqtt
-  BuildDepends: lwt, lwt.unix, oUnit, ocplib-endian
+  BuildDepends: lwt, lwt.unix, oUnit, ocplib-endian, str
   Pack:       false
   FindlibName: mqtt
-  ByteOpt:    -bin-annot
-  NativeOpt:  -bin-annot
-  
+  ByteOpt:    -bin-annot -ppopt -lwt-debug
+  NativeOpt:  -bin-annot -ppopt -lwt-debug
+
 Test "TestMqtt"
   Command: test/mqtt_test
-  
+
 Executable mqtt_example
   Path:       example
   BuildTools: ocamlbuild
