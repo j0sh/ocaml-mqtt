@@ -1125,12 +1125,13 @@ let () =
     let open Sys in
     set_signal sigpipe Signal_ignore
 
+let cxns = ref []
+
 let handle_sub outch s =
+    cxns := outch :: !cxns;
     let (msgid, list) = s in
     let qoses = List.map (fun (_, q) -> q) list in
     suback msgid qoses |> Lwt_io.write outch
-
-let cxns = ref []
 
 let handle_pub p =
     let (_, topic, payload) = p in
@@ -1141,7 +1142,6 @@ let handle_pub p =
 let srv_cxn cxn =
     let (inch, outch) = cxn in
     Lwt.catch (fun () ->
-    cxns := outch :: !cxns;
     read_packet cxn >>= (function
     | (_, Connect _) -> connack Cxnack_accepted |> Lwt_io.write outch
     | _ -> Lwt.fail (Failure "Mqtt Server: Expected connect")) >>= fun () ->
