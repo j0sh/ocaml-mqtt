@@ -92,18 +92,12 @@ let replace_branch branch tree =
     Node (v, q, branch::sans_a)
 
 let find_node elem branches =
-    let is_wild = elem = "+" || elem = "#" in
-    let cmp_k node =
+    let cmp node =
         match get_key node with
-            | Key y -> 0 == String.compare elem y
-            | _ -> false in
-    let cmp_w node =
-        match get_key node with
-            | Plus | Pound -> true
-            | _ -> false in
-    if is_wild then
-        try Some (List.find cmp_w branches) with Not_found -> None
-    else try Some (List.find cmp_k branches) with Not_found -> None
+            | Plus -> elem = "+"
+            | Pound -> elem = "#"
+            | Key k -> 0 == String.compare elem k in
+    try Some (List.find cmp branches) with Not_found -> None
 
 let rec build tree parts value =
     let branches = get_branches tree in
