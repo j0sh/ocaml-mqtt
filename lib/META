@@ -1,8 +1,8 @@
 # OASIS_START
-# DO NOT EDIT (digest: 5853003940d737fd9b67c9a238f95f74)
+# DO NOT EDIT (digest: 2ab906ec0e3fbfff880c15e66ed16659)
 version = "0.1"
 description = "OCaml implementation of the MQTT protocol"
-requires = "lwt lwt.unix oUnit ocplib-endian str"
+requires = "lwt lwt.unix oUnit ocplib-endian"
 archive(byte) = "mqtt.cma"
 archive(byte, plugin) = "mqtt.cma"
 archive(native) = "mqtt.cmxa"
