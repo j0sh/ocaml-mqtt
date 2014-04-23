@@ -1,162 +1,212 @@
-open Str
 open OUnit
 
 module Subscriptions : sig
 
     type 'a t
 
-    val new_node : string -> 'a t
+    val empty: 'a t
 
-    val add_node : 'a t ->  string -> 'a -> 'a t
+    val add_node : string -> 'a -> 'a t -> 'a t
 
-    val remove_node : 'a t -> string ->'a -> 'a t
+    val remove_node : string ->'a -> 'a t -> 'a t
 
-    val query : 'a t -> string -> 'a list
+    val query : string -> 'a t -> 'a list
+
+    val length : 'a t -> int
 
     val tests : OUnit.test list
 
 end = struct
 
-type node = Key of string | Plus | Pound
-type 'a t = Node of node * 'a list * 'a t list
+type 'a t =
+    | E (* empty *)
+    | NV of string * (string, 'a t) Hashtbl.t      (* no value     *)
+    | V  of string * (string, 'a t) Hashtbl.t * 'a list (* value   *)
+    | Pound of 'a list                              (* wildcard #   *)
 
-let default x = function
-    None -> x
-    | Some y -> y
+let split str =
+    let strs = ref [] in
+    let prev = ref 0 in
+    let split_segment i c =
+        if c = '/' then
+            let newstr = String.sub str !prev (i - !prev) in
+            prev := (i + 1); (* skip slash *)
+            strs := newstr :: !strs in
+    String.iteri split_segment str;
+    (* fixup the last element *)
+    strs := String.sub str !prev ((String.length str) - !prev) :: !strs;
+    List.rev !strs
 
-let get_key = function
-    | Node(x, _, _) -> x
+let empty = E
 
-let get_value = function
-    | Node(_, x, _) -> x
+let tbl_keys tbl = Hashtbl.fold (fun k _ acc -> k :: acc) tbl []
+let tbl_vals tbl = Hashtbl.fold (fun _ v acc -> v :: acc) tbl []
 
-let get_branches = function
-    | Node(_, _, x) -> x
+let rec length = function
+    | E -> 0
+    | Pound _ -> 1
+    | NV (_, t) | V (_, t, _) ->
+        let children = tbl_vals t in
+        1 + List.fold_left (fun acc x -> acc + (length x)) 0 children
 
-let set_value value node =
-    let Node (key, v_list, branches) = node in
-    Node(key, value :: v_list, branches)
+let get_vals = function
+    | E | NV _ -> []
+    | V (_, _, v) | Pound v  -> v
 
-let filter_branches elem branches =
-    let cmp node =
-        match get_key node with
-            | Key y -> 0 == String.compare elem y
-            | Plus | Pound -> true in
-    List.filter cmp branches
+let find_branches tbl k : 'a t list =
+    let f x = try [Hashtbl.find tbl x] with Not_found -> [] in
+    List.map f [k; "+"; "#"] |> List.concat
 
-let concat parms node =
-    match get_key node with
-    | Key _ | Plus -> parms
-    | Pound -> parms @ get_value node
+let pound_lookahead t v =
+    try match (Hashtbl.find t "#") with
+        | Pound z -> v @ z
+        | _ -> failwith "should never happen"
+    with Not_found -> v
 
-let ugly parms elem =
-    let x = parms @ get_value elem in
-    try
-        let cmp_pound elem =
-            match get_key elem with
-            | Pound -> true
-            | _ -> false in
-        let branches = get_branches elem in
-        let p = List.find cmp_pound branches in
-        x @ get_value p
-    with Not_found -> x
-
-let query tree key =
-    let k_parts = split (regexp "/") key in
-    let rec inner tree parms = function
-    | [] -> ugly parms tree
-    | h::t ->
-        let branches = get_branches tree in
-        let nodes = filter_branches h branches in
-        let r = List.map (fun x -> inner x [] t) nodes in
-        concat parms tree @ List.concat r in
+let query key tree =
+    let k_parts = split key in
+    let rec inner tree v p : 'a list =
+    match p with
+    | [] -> (match tree with
+        | Pound z -> v @ z
+        | V (_, t, z) -> pound_lookahead t (v @ z)
+        | NV (_, t) -> pound_lookahead t v
+        | E -> v)
+    | h :: m -> (match tree with
+        | E -> v
+        | Pound z -> v @ z
+        | NV (_, t) | V (_, t, _) ->
+            let branches = find_branches t h in
+            let r = List.map (fun x -> inner x v m) branches in
+            v @ List.concat r) in
     inner tree [] k_parts
 
-let new_node elem =
-    let res = ( elem = "+", elem = "#" ) in
-    let inner = match res with
-        | (true, _) -> Plus
-        | (_, true) -> Pound
-        | _ -> Key elem in
-    Node (inner, [], [])
+let add_node keys v t =
+    let new_node k v i n =
+        let h = Hashtbl.create 10 in
+        let j = k.(i) in
+        if j = "#" then Pound []
+        else if n <> 0 then NV (j, h)
+        else V (j, h, [v]) in
 
-let replace_branch branch tree =
-    let a = get_key branch in
-    let Node (v, q, branches) = tree in
-    let filt node =
-        let b = get_key node in
-        match a, b with
-            | Plus, Plus
-            | Pound, Pound -> false
-            | Key c, Key d -> 0 != String.compare c d
-            | _, _ -> true in
-    let sans_a = List.filter filt branches in
-    Node (v, q, branch::sans_a)
+    let rec add k v i n = function
+        | E -> new_node [|"*root*"|] v i n |> add k v i n
+        | NV (key, h) as e ->
+            if n = 0 then V (key, h, [v])
+            else
+                let child = try Hashtbl.find h k.(i)
+                with Not_found -> new_node k v i n in
+                let child = add k v (i + 1) (n - 1) child in
+                Hashtbl.replace h k.(i) child;
+                e
+        | V (key, h, v1) as e ->
+            if n = 0 then V (key, h, v :: v1)
+            else
+                let child = try Hashtbl.find h k.(i)
+                with Not_found -> new_node k v i n in
+                let child = add k v (i + 1) (n - 1) child in
+                Hashtbl.replace h k.(i) child;
+                e
+        | Pound v1 -> Pound (v :: v1) in
 
-let find_node elem branches =
-    let cmp node =
-        match get_key node with
-            | Plus -> elem = "+"
-            | Pound -> elem = "#"
-            | Key k -> 0 == String.compare elem k in
-    try Some (List.find cmp branches) with Not_found -> None
+    let k = split keys |> Array.of_list in
+    add k v 0 (Array.length k) t
 
-let rec build tree parts value =
-    let branches = get_branches tree in
-    match parts with
-    | [] -> tree
-    | h :: [] ->
-        let n = default (new_node h) (find_node h branches) in
-        let q = set_value value n in
-        replace_branch q tree
-    | h::t -> let n = default (new_node h) (find_node h branches) in
-        replace_branch (build n t value) tree
+let get_branches = function
+    | E | Pound _ -> []
+    | V (_, t, _) | NV (_, t) -> tbl_vals t
 
-let add_node tree str value =
-    let parts = split (regexp "/") str in
-    build tree parts value
+let rec get_value = function
+    | E -> []
+    | NV (_, t) -> List.concat (List.map get_value (tbl_vals t))
+    | Pound v -> v
+    | V (_, t, v) -> v @ List.concat (List.map get_value (tbl_vals t))
 
-let rec children_have_values node =
-    let cmp acc x = if acc then acc else children_have_values x in
-    if 0 = List.length (get_branches node) &&
-       0 != List.length (get_value node) then true
-    else List.fold_left cmp false (get_branches node)
+let find_branch k = function
+    | E | Pound _ -> None
+    | V (_, t, _) | NV (_, t) ->
+        try Some (Hashtbl.find t k) with Not_found -> None
 
-let rec remove tree parts value =
-    match parts with
-    | h :: t -> begin
-        match find_node h (get_branches tree) with
-            | None -> tree
-            | Some s ->
-                let not_wild = h <> "+" && h <> "#" in
-                let Node (k, v, b) = tree in
-                let nb = List.map (fun x -> remove x t value) b in
-                let nb = List.filter children_have_values nb in
-                let nv =
-                    if not_wild then List.filter (fun x -> x <> value) v
-                    else v in
-                Node (k, nv, nb)
-        end
-    | [] ->
-        let v = List.filter (fun x -> x <> value) (get_value tree) in
-        Node (get_key tree, v, get_branches tree)
+let remove_branch k = function
+    | E as e | (Pound _ as e) -> e
+    | (NV (_, t) as e) | (V (_, t, _) as e) ->
+        Hashtbl.remove t k;
+        if 0 = Hashtbl.length t then E else e
 
-let remove_node tree str value =
-    let parts = split (regexp "/") str in
-    remove tree parts value
+let replace_branch k g = function
+    | E as e | (Pound _ as e) -> e
+    | (NV (_, t) as e) | (V (_, t, _) as e) ->
+        Hashtbl.replace t k g;
+        e
+
+let remove_node key value tree =
+    let parts = split key in
+    let remove values v = List.filter (fun x -> x <> v) values in
+    let rec inner tree = function
+        | h :: [] ->
+            (match find_branch h tree with
+                | None -> tree
+                | Some b -> (match b with
+            | E | NV _ -> tree
+            | Pound v ->
+                if "#" = h then begin
+                    let v = remove v value in
+                    if 0 = List.length v then remove_branch h tree
+                    else replace_branch h (Pound v) tree
+                end else failwith "not pound; should never happen"
+            | V (k, t, v) ->
+                let v = remove v value in
+                if 0 = List.length v then begin
+                    if 0 = Hashtbl.length t then remove_branch k tree
+                    else replace_branch k (NV (k, t)) tree
+                end else replace_branch k (V (k, t, v)) tree))
+        | h :: t ->
+            (match find_branch h tree with
+            | Some b ->
+                let e = inner b t in
+                if E = e then remove_branch h tree
+                else replace_branch h e tree
+            | None -> tree)
+        | [] -> tree in
+    inner tree parts
+
+let rec tree_of_string tree level =
+    let vals = match tree with
+    | E | NV _ -> []
+    | V (_, _, v) | Pound v -> v in
+    let key = match tree with
+    | E -> "*empty*"
+    | Pound _ -> "#"
+    | NV (k, _) -> "nv: " ^ k
+    | V (k, _, _) -> "v: " ^ k in
+    let branches = match tree with
+    | E | Pound _ -> []
+    | NV (_, t) | V (_, t, _) -> tbl_vals t in
+    let vals = String.concat "," vals in
+    let vals = if "" <> vals then ": " ^ vals else "" in
+    let _ = Printf.printf "%*d %s %s\n" level level key vals in
+    let func x = tree_of_string x (level + 4) in
+    List.iter func branches
+
+let split_test _ =
+    let printer = String.concat "," in
+    let ae = assert_equal ~printer in
+    let res = split "a/b/c/d" in
+    ae ["a";"b";"c";"d"] res;
+    let res = split "/abc//def/ghi/" in
+    ae [""; "abc"; ""; "def";"ghi"; ""] res
 
 let plus_test _ =
-    let tree = new_node "" in
-    let tree = add_node tree "helo/happy/world!" "helosadworld" in
-    let tree = add_node tree "helo/pretty/wurld" "helothere" in
-    let tree = add_node tree "omg/wtf" "omgwtf" in
-    let tree = add_node tree "omg/wtf/bbq" "omgwtfbbq" in
-    let tree = add_node tree "omg/srsly" "omgsrsly" in
-    let tree = add_node tree "omg/+/bbqz" "omgwildbbq" in
-    let tree = add_node tree "omg/+" "omgwildcard" in
-    let tree = add_node tree "a/+/c/+/e/+" "abcdef" in
-    let tree = add_node tree "asdfies" "QWERTIES" in
-    let r = [
+    let tree = add_node "helo/happy/world!" "helosadworld" empty
+    |> add_node "helo/pretty/wurld" "helothere"
+    |> add_node "omg/wtf" "omgwtf"
+    |> add_node "omg/wtf/bbq" "omgwtfbbq"
+    |> add_node "omg/srsly" "omgsrsly"
+    |> add_node "omg/+/bbqz" "omgwildbbq"
+    |> add_node "omg/+" "omgwildcard"
+    |> add_node "a/+/c/+/e/+" "abcdef"
+    |> add_node "asdfies" "QWERTIES"
+    in let r = [
         "helo/pretty/wurld";
         "helo/heh/qwert/blah";
         "omg/lol/bbqz";
@@ -177,18 +227,21 @@ let plus_test _ =
         [];
     ] in
     let printer = String.concat "," in
-    let res = List.map (fun x -> query tree x) r in
-    List.iter2 (fun x y -> assert_equal ~printer x y) expected res
+    let cmp a b =
+        let s = List.sort (fun x y -> String.compare x y) in
+        (s a) = (s b) in
+    let ae = assert_equal ~printer ~cmp in
+    let res = List.map (fun x -> query x tree) r in
+    List.iter2 (fun x y -> ae x y) expected res
 
 let pound_test _ =
-    let root = new_node "#" in
-    let root = add_node root "a/#" "a" in
-    let root = add_node root "a/b/#" "ab" in
-    let root = add_node root "a/b" "plainab" in
-    let root = add_node root "a/b/c/#" "abc" in
-    let root = add_node root "a/b/c/d/#" "abcd" in
-    let root = add_node root "a/b/c/d/e/#" "abcde" in
-    let r = [
+    let root = add_node "a/#" "a" empty
+    |> add_node "a/b/#" "ab"
+    |> add_node "a/b" "plainab"
+    |> add_node "a/b/c/#" "abc"
+    |> add_node "a/b/c/d/#" "abcd"
+    |> add_node "a/b/c/d/e/#" "abcde"
+    in let r = [
         "a";
         "a/b";
         "a/b/c";
@@ -203,34 +256,24 @@ let pound_test _ =
         [];
     ] in
     let printer = String.concat "," in
-    let res = List.map (fun x -> query root x) r in
+    let res = List.map (fun x -> query x root) r in
     List.iter2 (fun x y -> assert_equal ~printer x y) expected res
 
-let rec tree_of_string tree level =
-    let Node (v, q, branches) = tree in
-    let r = match v with Key k -> k | Pound -> "#" | Plus -> "+" in
-    let s = String.concat "," q in
-    let s = if String.length s > 0 then ": " ^ s else s in
-    let _ = Printf.printf "%*d %s %s\n" level level r s in
-    let func x = tree_of_string x (level + 4) in
-    List.iter func branches
-
 let remove_test _ =
-    let root = new_node "*root*" in
-    let root = add_node root "a"   "a" in
-    let root = add_node root "a/+" "a+" in
-    let root = add_node root "a/#" "a#" in
-    let root = add_node root "a/#" "tst" in
-    let root = add_node root "a"  "tst" in (* to double check wilds *)
-    let root = add_node root "a/b" "ab" in
-    let root = add_node root "a/b/#" "ab#" in
-    let root = add_node root "a/b"  "ab2" in
-    let root = add_node root "a/+/c" "a+c" in
-    let root = add_node root "a/b/c" "abc" in
-    let root = add_node root "a/+/c/#" "a+c#" in
-    let root = add_node root "a/b/c/d" "abcd" in
-    let root = add_node root "a/b/c/d" "abcd2" in
-    let printer = String.concat ", " in
+    let root = add_node "a" "a" empty
+    |> add_node "a/+" "a+"
+    |> add_node "a/#" "a#"
+    |> add_node "a/#" "tst"
+    |> add_node "a"  "tst" (* to double check wilds *)
+    |> add_node "a/b" "ab"
+    |> add_node "a/b/#" "ab#"
+    |> add_node "a/b"  "ab2"
+    |> add_node "a/+/c" "a+c"
+    |> add_node "a/b/c" "abc"
+    |> add_node "a/+/c/#" "a+c#"
+    |> add_node "a/b/c/d" "abcd"
+    |> add_node "a/b/c/d" "abcd2"
+    in let printer = String.concat ", " in
     let cmp a b =
         let s = List.sort (fun x y -> String.compare x y) in
         (s a) = (s b) in
@@ -248,58 +291,59 @@ let remove_test _ =
         else List.fold_left check false (get_branches tree) in
 
     (* sanity check the first element *)
-    let res = query root "a" in
+    let res = query "a" root in
     ae ["tst"; "a"; "tst"; "a#";] res;
-    let root = remove_node root "a/#" "tst" in
-    let res = query root "a" in
+    let root = remove_node "a/#" "tst" root in
+    let res = query "a" root in
     ae ["tst"; "a"; "a#";] res;
-    let root = remove_node root "a" "tst" in
-    let res = query root "a" in
+    let root = remove_node "a" "tst" root in
+    let res = query "a" root in
     ae ["a"; "a#";] res;
 
     (* check that there are no empty leaves *)
-    let res = query root "a/b" in
+    let res = query "a/b" root in
     ae ["ab"; "ab#"; "ab2"; "a#"; "a+";] res;
     (* should produce an empty leaf; the "#" dangles *)
-    let root = remove_node root "a/b/#" "ab#" in
-    let res = query root "a/b" in
+    let root = remove_node "a/b/#" "ab#" root in
+    let res = query "a/b" root in
     ae ["ab"; "ab2"; "a#"; "a+"] res;
     assert_equal ~msg: "empty leaves a/b/#" false (has_empty_leaves root);
 
     (* misc things, such as removing all values from a parent *)
-    let res = query root "a/b/c" in
+    let res = query "a/b/c" root in
     ae ["a+c"; "abc"; "a+c#"; "a#"] res;
-    let root = remove_node root "a/b/c" "abc" in
-    let res = query root "a/b/c" in
+    let root = remove_node "a/b/c" "abc" root in
+    let res = query "a/b/c" root in
     ae ["a+c"; "a+c#"; "a#"] res;
-    let root = remove_node root "a/+/c" "a+c" in
-    let res = query root "a/b/c" in
+    let root = remove_node "a/+/c" "a+c" root in
+    let res = query "a/b/c" root in
     ae ["a+c#"; "a#";] res;
-    let root = remove_node root "a/+/c/#" "a+c#" in
-    let res = query root "a/b/c" in
+    let root = remove_node "a/+/c/#" "a+c#" root in
+    let res = query "a/b/c" root in
     ae ["a#"] res;
     assert_equal ~msg:"empty leaves; none" false (has_empty_leaves root);
 
     (* remove a sibling value from same key *)
-    let res = query root "a/b/c/d" in
+    let res = query "a/b/c/d" root in
     ae ["a#"; "abcd"; "abcd2"] res;
-    let root = remove_node root "a/b/c/d" "abcd" in
-    let res = query root "a/b/c/d" in
+    let root = remove_node "a/b/c/d" "abcd" root in
+    let res = query "a/b/c/d" root in
     ae ["a#"; "abcd2"] res;
 
     (* remove nonexistent value from valid key *)
-    let root = remove_node root "a/b/c/d" "nothere" in
-    let res = query root "a/b/c/d" in
+    let root = remove_node "a/b/c/d" "nothere" root in
+    let res = query "a/b/c/d" root in
     ae ["a#"; "abcd2"] res;
 
     (* remove nonexistent value from invalid key *)
-    let root = remove_node root "a/c/d/" "rlynothere" in
-    let res = query root "a/c/d" in
+    let root = remove_node "a/c/d/" "rlynothere" root in
+    let res = query "a/c/d" root in
     ae ["a#"] res;
     assert_equal ~msg: "empty leaves; final" false (has_empty_leaves root);
     ()
 
 let tests = [
+    "split_test" >:: split_test;
     "plus test" >:: plus_test;
     "pound_test" >:: pound_test;
     "remove_test" >:: remove_test;
