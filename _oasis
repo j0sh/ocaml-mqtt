@@ -10,7 +10,7 @@ Library mqtt
   Path:       lib
   BuildTools: ocamlbuild
   Modules:    Mqtt
-  BuildDepends: lwt, lwt.unix, oUnit, ocplib-endian, str
+  BuildDepends: lwt, lwt.unix, oUnit, ocplib-endian
   Pack:       false
   FindlibName: mqtt
   ByteOpt:    -bin-annot -ppopt -lwt-debug
