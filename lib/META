@@ -1,7 +1,7 @@
 # OASIS_START
-# DO NOT EDIT (digest: 2ab906ec0e3fbfff880c15e66ed16659)
-version = "0.1"
-description = "OCaml implementation of the MQTT protocol"
+# DO NOT EDIT (digest: 78b08b07ae328d16b4b541a16257c576)
+version = "0.0.1"
+description = "MQTT message parser in OCaml"
 requires = "lwt lwt.unix oUnit ocplib-endian"
 archive(byte) = "mqtt.cma"
 archive(byte, plugin) = "mqtt.cma"
