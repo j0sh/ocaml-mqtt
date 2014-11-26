@@ -1,7 +1,7 @@
 OASISFormat: 0.4
 Name:        mqtt
-Version:     0.1
-Synopsis:    OCaml implementation of the MQTT protocol
+Version:     0.0.1
+Synopsis:    MQTT message parser in OCaml
 Authors:     Josh Allmann <joshua.allmann@gmail.com>
 License:     BSD-3-clause
 Plugins:     META (0.4), DevFiles (0.4)
