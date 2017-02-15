@@ -87,7 +87,7 @@ module Mqtt : sig
 
 end = struct
 
-module BE = EndianString.BigEndian
+module BE = EndianBytes.BigEndian
 
 module ReadBuffer : sig
 
@@ -107,18 +107,18 @@ end = struct
 
 type t = {
     mutable pos: int;
-    mutable buf: string;
+    mutable buf: bytes;
 }
 
 let create () = {pos=0; buf=""}
 
 let add_string rb str =
-    let curlen = (String.length rb.buf) - rb.pos in
-    let strlen = String.length str in
+    let curlen = (Bytes.length rb.buf) - rb.pos in
+    let strlen = Bytes.length str in
     let newlen = strlen + curlen in
-    let newbuf = String.create newlen in
-    String.blit rb.buf rb.pos newbuf 0 curlen;
-    String.blit str 0 newbuf curlen strlen;
+    let newbuf = Bytes.create newlen in
+    Bytes.blit_string rb.buf rb.pos newbuf 0 curlen;
+    Bytes.blit_string str 0 newbuf curlen strlen;
     rb.pos <- 0;
     rb.buf <- newbuf
 
@@ -127,19 +127,19 @@ let make str =
     add_string rb str;
     rb
 
-let len rb = (String.length rb.buf) - rb.pos
+let len rb = (Bytes.length rb.buf) - rb.pos
 
 let read rb count =
-    let len = (String.length rb.buf) - rb.pos in
+    let len = (Bytes.length rb.buf) - rb.pos in
     if count < 0 || len < count then
         raise (Invalid_argument "buffer underflow");
-    let ret = String.sub rb.buf rb.pos count in
+    let ret = Bytes.sub rb.buf rb.pos count in
     rb.pos <- rb.pos + count;
     ret
 
 let read_uint8 rb =
     let str = rb.buf in
-    let slen = (String.length str) - rb.pos in
+    let slen = (Bytes.length str) - rb.pos in
     if slen < 1 then raise (Invalid_argument "string too short");
     let res = BE.get_uint8 str rb.pos in
     rb.pos <- rb.pos + 1;
@@ -147,7 +147,7 @@ let read_uint8 rb =
 
 let read_uint16 rb =
     let str = rb.buf in
-    let slen = (String.length str) - rb.pos in
+    let slen = (Bytes.length str) - rb.pos in
     if slen < 2 then raise (Invalid_argument "string too short");
     let res = BE.get_uint16 str rb.pos in
     rb.pos <- rb.pos + 2;
@@ -335,12 +335,12 @@ let gen_id () =
     !msgid
 
 let int16be n =
-    let s = String.create 2 in
+    let s = Bytes.create 2 in
     BE.set_int16 s 0 n;
     s
 
 let int8be n =
-    let s = String.create 1 in
+    let s = Bytes.create 1 in
     BE.set_int8 s 0 n;
     s
 
@@ -439,8 +439,8 @@ let fixed_header typ (parms:pkt_opt) body_len =
     let dup = (bit_of_bool dup) lsl 3 in
     let qos = (bits_of_qos qos) lsl 1 in
     let retain = bit_of_bool retain in
-    let hdr = String.create 1 in
-    let len = String.create 4 in
+    let hdr = Bytes.create 1 in
+    let len = Bytes.create 4 in
     BE.set_int8 hdr 0 (msgid + dup + qos + retain);
     BE.set_int32 len 0 (encode_length body_len);
     let len = trunc len in
@@ -468,9 +468,9 @@ let connect_payload ?userpass ?will ?(flags = []) ?(timer = 10) id =
         ((List.fold_right accum flags 0), (addlen id))
         |> addhdr2 0x04 will |> adduserpass userpass in
     let tbuf = int16be timer in
-    let fbuf = String.create 1 in
+    let fbuf = Bytes.create 1 in
     BE.set_int8 fbuf 0 flags;
-    let accum acc a = acc + (String.length a) in
+    let accum acc a = acc + (Bytes.length a) in
     let fields = [name; version; fbuf; tbuf; pay] in
     let lens = List.fold_left accum 0 fields in
     let buf = Buffer.create lens in
@@ -693,7 +693,7 @@ let read_packet ctx =
     Lwt_io.read_char inch >>= fun ch ->
     let (msgid, opts) = Char.code ch |> decode_fixed_header in
     decode_length inch >>= fun count ->
-    let data = String.create count in
+    let data = Bytes.create count in
     let rd = try Lwt_io.read_into_exactly inch data 0 count
     with End_of_file -> Lwt.fail (Failure "could not read bytes") in
     rd >>= fun () ->
@@ -719,9 +719,9 @@ let test_encode _ =
 let test_decode_in =
     let equals inp =
         let printer = string_of_int in
-        let buf = String.create 4 in
+        let buf = Bytes.create 4 in
         BE.set_int32 buf 0 (encode_length inp);
-        let buf = Lwt_bytes.of_string (trunc buf) in
+        let buf = Lwt_bytes.of_bytes (trunc buf) in
         let inch = Lwt_io.of_bytes Lwt_io.input buf in
         decode_length inch >>= fun len ->
         assert_equal ~printer inp len;
@@ -746,7 +746,7 @@ let test_connect _ =
     assert_raises (Invalid_argument "timer too large") pkt;
     let pkt = connect_payload ~userpass:(Username "bob") "2" in
     assert_equal "\000\006MQIsdp\003\128\000\n\000\0012\000\003bob" pkt;
-    let lstr = String.create 0x10000 in (* long string *)
+    let lstr = Bytes.create 0x10000 in (* long string *)
     let pkt () = connect_payload ~userpass:(Username lstr) "22" in
     assert_raises (Invalid_argument "string too long") pkt;
     let pkt = connect_payload ~userpass:(UserPass ("", "alice")) "3" in
