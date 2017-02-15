@@ -1162,7 +1162,7 @@ let srv_cxn cxn =
             cxns := List.filter (fun ch -> ch != outch) !cxns;
             Lwt_io.close inch <&> Lwt_io.close outch >>= fun () ->
             Lwt.return_unit
-        | exn -> Lwt_io.printlf "SRVERR: %s" (Printexc.to_string exn)) |> Lwt.ignore_result
+        | exn -> Lwt_io.printlf "SRVERR: %s" (Printexc.to_string exn))
 
 let addr host port =
     Lwt_unix.gethostbyname host >>= fun hostent ->
@@ -1171,8 +1171,7 @@ let addr host port =
 
 let listen ?(host = "localhost") ?(port = 1883) () =
     addr host port >>= fun a ->
-    let srv = Lwt_io.establish_server ~backlog:1000 a srv_cxn in
-    Lwt.return srv
+    Lwt_io.Versioned.establish_server_2 ~backlog:1000 a srv_cxn
 
 end
 
